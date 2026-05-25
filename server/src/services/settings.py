@@ -28,7 +28,7 @@ class SettingsService:
             "system_prompt": {"value": "You are a movie recommendation assistant. Your job is to suggest movies to users based on their preferences and current context.", "type": SettingType.STRING, "description": "Default system prompt to guide the model's behavior."},
         },
         "tmdb": {
-            "api_key": {"value": None, "type": SettingType.STRING, "description": "TMDB API Read Access Token", "required": True},
+            "api_key": {"value": None, "type": SettingType.STRING, "description": "TMDB API key or Read Access Token", "required": True},
         },
     }
     # DEFAULT_SETTINGS will be populated by _build_default_settings_if_needed

@@ -111,6 +111,13 @@ The original intent was to write a script to generate a prompt that gave me reco
 
 ## Docker Compose Example
 
+- Published image: `ghcr.io/gipasoft/discovarr:latest`
+- Pull the image directly with:
+
+```bash
+docker pull ghcr.io/gipasoft/discovarr:latest
+```
+
 - This example `compose.yml` demonstrates the minimum config for the Discovarr container.
 - Environment variables can be set according to your specific setup and will update populate Settings. ENVs will always overwrite Settings in the database. 
 - Volumes used in the container are `/config` and `/backups`. Map `/config` to a path on your host to persist the database between container restarts. 
@@ -120,7 +127,7 @@ The original intent was to write a script to generate a prompt that gave me reco
 ```yaml
 services:
   discovarr:
-    image: ghcr.io/sqrlmstr5000/discovarr:latest 
+    image: ghcr.io/gipasoft/discovarr:latest
     container_name: discovarr
     restart: unless-stopped
     ports:
@@ -131,6 +138,13 @@ services:
     volumes:
       - ./config:/config
       - ./cache:/cache
+```
+
+To update an existing deployment, including on QNAP Container Station or any Docker Compose host, run these commands from the directory containing your `compose.yml`:
+
+```bash
+docker compose pull
+docker compose up -d
 ```
 
 ### Environment Variables 

@@ -1,6 +1,6 @@
 services:
   discovarr:
-    image: ghcr.io/sqrlmstr5000/discovarr:latest 
+    image: ghcr.io/gipasoft/discovarr:latest
     container_name: discovarr
     restart: unless-stopped
     ports:

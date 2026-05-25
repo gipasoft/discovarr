@@ -537,11 +537,12 @@ class Discovarr:
             if tmdb_lookup:
                 tmdb_id = tmdb_lookup.get("id")
                 # Get media details from TMDB
-                tmdb_media_detail = self.tmdb.get_media_detail(tmdb_id=tmdb_id, media_type=media_type)
+                tmdb_media_detail = self.tmdb.get_media_detail(tmdb_id=tmdb_id, media_type=media_type) or {}
 
                 # Get poster art from TMDB if tmdb_media_detail is not None
                 poster_url = None
-                poster_url_source =  f"https://image.tmdb.org/t/p/w500{tmdb_media_detail.get('poster_path')}" 
+                poster_path = tmdb_media_detail.get("poster_path")
+                poster_url_source = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
                 # Ensure we have a URL and an ID for caching. Only save to cache if necessary.
                 if poster_url_source and tmdb_id and (self.auto_media_save or search_id): 
                     poster_url = await self._cache_image_if_needed(poster_url_source, "media", tmdb_id)
@@ -586,7 +587,7 @@ class Discovarr:
                         "release_date": release_date_val,
                         "networks": ", ".join(network_names) if network_names and isinstance(network_names, list) else None,
                         "genres": ", ".join(genre_names) if genre_names else None,
-                        "original_language": tmdb_media_detail.get("original_language"),
+                        "original_language": tmdb_media_detail.get("original_language") if tmdb_media_detail else None,
                         "search_id": search_id,
                     }
                     # Save results if running an ad-hoc search with the Auto Media Save option selected or when running a saved search.
@@ -615,7 +616,7 @@ class Discovarr:
                         "release_date": release_date_val,
                         "networks": ", ".join(network_names) if network_names and isinstance(network_names, list) else None,
                         "genres": ", ".join(genre_names) if genre_names else None,
-                        "original_language": tmdb_media_detail.get("original_language"),
+                        "original_language": tmdb_media_detail.get("original_language") if tmdb_media_detail else None,
                     }
                     # Save results if running an ad-hoc search with the Auto Media Save option selected or when running a saved search.
                     if self.auto_media_save or search_id: 
