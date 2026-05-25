@@ -189,7 +189,7 @@ docker compose up -d
 
 # --- Gemini AI Settings ---
 - GEMINI_API_KEY=your_gemini_api_key
-- GEMINI_MODEL=gemini-pro # Or your preferred Gemini model
+- GEMINI_MODEL=gemini-2.5-flash # Or your preferred Gemini model
 - GEMINI_THINKING_BUDGET=1024
 - GEMINI_TEMPERATURE=0.7
 

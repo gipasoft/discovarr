@@ -147,6 +147,25 @@ const mediaForInternalRequestModal = ref(null);
 const imageLoading = ref(true);
 const currentImageSrc = ref('');
 const placeholderImage = '/placeholder-image.jpg'; // Assumes it's in the public folder
+const apiBaseUrl = config.apiUrl.replace(/\/api$/, '');
+
+const resolveImageSrc = (posterUrl, posterUrlSource = null) => {
+    const imageValue = posterUrl || posterUrlSource;
+
+    if (!imageValue) {
+        return placeholderImage;
+    }
+
+    if (/^https?:\/\//i.test(imageValue)) {
+        return imageValue;
+    }
+
+    if (imageValue.startsWith('/')) {
+        return `${apiBaseUrl}${imageValue}`;
+    }
+
+    return `${apiBaseUrl}/cache/image/${imageValue}`;
+};
 
 const triggerInternalRequestModal = (movieItem) => {
     if (movieItem.requested) return; // Don't open if already requested
@@ -166,14 +185,9 @@ watch(() => props.movie, (newMovie, oldMovie) => {
           editingTmdbId.value = false;
         }
 
-        // Handle image loading
-        if (newMovie.poster_url) {
-            imageLoading.value = true; // Set to true to show placeholder before new image loads
-            currentImageSrc.value = `${config.apiUrl.replace(/\/api$/, '')}/cache/image/${newMovie.poster_url}`;
-        } else {
-            imageLoading.value = false; // No poster, show placeholder image directly
-            currentImageSrc.value = placeholderImage;
-        }
+        const imageSrc = resolveImageSrc(newMovie.poster_url, newMovie.poster_url_source);
+        imageLoading.value = imageSrc !== placeholderImage;
+        currentImageSrc.value = imageSrc;
     } else {
         editableTmdbIdValue.value = '';
         editingTmdbId.value = false;

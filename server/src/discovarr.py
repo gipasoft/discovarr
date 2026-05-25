@@ -5,6 +5,7 @@ import sys
 import os
 import traceback 
 from datetime import datetime, timedelta
+from pathlib import Path
 from urllib.parse import urljoin
 from typing import Optional, Dict, List, Any, Union
 import asyncio 
@@ -800,30 +801,70 @@ class Discovarr:
             return None
         return await self.llm_service.get_available_models()
 
-    async def _cache_image_if_needed(self, image_url: str, provider_name: str, item_id: Union[str, int]) -> Optional[str]:
+    def _get_image_cache_headers(self, provider_name: str) -> Optional[Dict[str, str]]:
+        if provider_name == "jellyfin" and self.jellyfin_api_key:
+            return {"X-Emby-Token": self.jellyfin_api_key}
+
+        return None
+
+    def _poster_needs_cache_repair(self, poster_url: Optional[str]) -> bool:
+        if not poster_url:
+            return True
+
+        return poster_url.startswith("http://") or poster_url.startswith("https://")
+
+    async def _cache_image_if_needed(self, image_url: str, provider_name: str, item_id: Union[str, int], headers: Optional[Dict[str, str]] = None) -> Optional[str]:
         """
         Asynchronously caches an image if a valid external URL is provided.
-        Returns the path to the cached image or the original URL if caching is skipped/failed.
+        Returns the cached image filename, or None if caching is skipped/failed.
         """
-        original_url = image_url # Keep original URL as fallback
         if not image_url or not item_id:
             self.logger.debug(f"Skipping image cache for {provider_name} item {item_id}: Missing URL or item ID.")
-            return original_url
+            return None
 
         # Check if the URL looks like it's already a local cached path
         if image_url.startswith(f"/{self.image_cache.cache_base_dir.name}/"):
             self.logger.debug(f"Skipping image cache for {provider_name} item {item_id}: URL '{image_url}' appears to be already cached.")
-            return
+            return Path(image_url).name
 
         try:
             # Create a new session for each task for simplicity in fire-and-forget.
             # For very high volume, a shared session might be considered.
             async with aiohttp.ClientSession() as session:
-                cached_path = await self.image_cache.save_image_from_url(session, image_url, provider_name, str(item_id))
-                return cached_path if cached_path else original_url
+                return await self.image_cache.save_image_from_url(session, image_url, provider_name, str(item_id), headers=headers)
         except Exception as e:
             self.logger.error(f"Exception in image caching task for {provider_name} item {item_id} (URL: {image_url}): {e}", exc_info=True)
-        return original_url # Fallback to original URL on error
+        return None
+
+    async def _resolve_watch_history_poster(self, item: ItemsFiltered, source: str, tmdb_details: Optional[Dict[str, Any]]) -> tuple[Optional[str], Optional[str]]:
+        poster_candidates: List[tuple[str, str, Union[str, int], Optional[Dict[str, str]]]] = []
+
+        if item.poster_url:
+            poster_candidates.append((
+                item.poster_url,
+                source,
+                item.id,
+                self._get_image_cache_headers(source),
+            ))
+
+        if tmdb_details and tmdb_details.get("poster_path"):
+            tmdb_poster_url = f"https://image.tmdb.org/t/p/w500{tmdb_details.get('poster_path')}"
+            tmdb_item_id = tmdb_details.get("id") or item.id
+            if tmdb_poster_url != item.poster_url:
+                poster_candidates.append((tmdb_poster_url, "tmdb", tmdb_item_id, None))
+
+        first_source_url = poster_candidates[0][0] if poster_candidates else None
+        for poster_url_source, poster_provider, poster_item_id, headers in poster_candidates:
+            cached_poster_path = await self._cache_image_if_needed(
+                poster_url_source,
+                poster_provider,
+                poster_item_id,
+                headers=headers,
+            )
+            if cached_poster_path:
+                return cached_poster_path, poster_url_source
+
+        return None, first_source_url
 
     async def _sync_watch_history_to_db(self, user_name: str, user_id: str, recently_watched_items: Optional[List[ItemsFiltered]], source: str) -> Optional[List[ItemsFiltered]]:
         """
@@ -858,16 +899,8 @@ class Discovarr:
 
                 if not media_instance:
                     self.logger.info(f"Media '{item.name}', type: ({item.type}) not found in DB. Creating new entry from {source} watch history.")
-                    tmdb_details = self.tmdb.get_media_detail(tmdb_id=item.id, media_type=item.type) if self.tmdb else None
-                    
-                    poster_url_source_val = item.poster_url # Use poster from provider if available
-                    cached_poster_path = None
-
-                    if not poster_url_source_val and tmdb_details and tmdb_details.get("poster_path"):
-                        poster_url_source_val = f"https://image.tmdb.org/t/p/w500{tmdb_details.get('poster_path')}"
-                    
-                    if poster_url_source_val:
-                         cached_poster_path = await self._cache_image_if_needed(poster_url_source_val, source, item.id)
+                    tmdb_details = self.tmdb.get_media_detail(tmdb_id=item.id, media_type=item.type) if self.tmdb and item.id else None
+                    cached_poster_path, poster_url_source_val = await self._resolve_watch_history_poster(item, source, tmdb_details)
                     
                     network_names = []
                     genre_names = []
@@ -915,6 +948,21 @@ class Discovarr:
                         continue 
                 
                 if media_instance:
+                    if self._poster_needs_cache_repair(media_instance.poster_url):
+                        tmdb_details_for_existing = self.tmdb.get_media_detail(tmdb_id=item.id, media_type=item.type) if self.tmdb and item.id else None
+                        cached_poster_path, poster_url_source_val = await self._resolve_watch_history_poster(item, source, tmdb_details_for_existing)
+                        media_updates = {}
+                        if cached_poster_path:
+                            media_updates["poster_url"] = cached_poster_path
+                        if poster_url_source_val and not media_instance.poster_url_source:
+                            media_updates["poster_url_source"] = poster_url_source_val
+                        if media_updates:
+                            media_updates["updated_at"] = datetime.now()
+                            Media.update(media_updates).where(Media.id == media_instance.id).execute()
+                            for field_name, field_value in media_updates.items():
+                                setattr(media_instance, field_name, field_value)
+                            self.logger.info(f"Updated poster metadata for existing media '{media_instance.title}' from {source} watch history.")
+
                     add_history_success = self.db.add_watch_history(
                         media_id=media_instance.id, 
                         watched_by=user_name, 

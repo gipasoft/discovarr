@@ -15,6 +15,14 @@ class GeminiProvider(LLMProviderBase):
     A class to interact with the Gemini API for finding similar media.
     """
     PROVIDER_NAME = "gemini"
+    DEFAULT_MODEL = "gemini-2.5-flash"
+    MODEL_ALIASES = {
+        "gemini-pro": DEFAULT_MODEL,
+        "gemini-1.5-flash-latest": DEFAULT_MODEL,
+        "gemini-1.5-pro-latest": "gemini-2.5-pro",
+        "gemini-2.5-flash-preview-05-20": DEFAULT_MODEL,
+    }
+
     def __init__(self, gemini_api_key: str):
         """
         Initializes the Gemini class with API configurations.
@@ -30,6 +38,13 @@ class GeminiProvider(LLMProviderBase):
         self.logger.info("Initializing Gemini class...")
 
         self.client = genai.Client(api_key=self.gemini_api_key)
+
+    @classmethod
+    def normalize_model_name(cls, model: Optional[str]) -> Optional[str]:
+        if not model:
+            return model
+
+        return cls.MODEL_ALIASES.get(model, model)
 
     @property
     def name(self) -> str:
@@ -195,7 +210,7 @@ class GeminiProvider(LLMProviderBase):
         Lists available Gemini and Gemma model names, with "models/" prefix removed.
 
         Returns:
-            Optional[List[str]]: A list of approved model names (e.g., "gemini-pro", "gemma-7b"),
+            Optional[List[str]]: A list of approved model names (e.g., "gemini-2.5-flash", "gemma-7b"),
                                  or None on error.
         """
         if not self.client:
@@ -230,7 +245,7 @@ class GeminiProvider(LLMProviderBase):
         return {
             "enabled": {"value": False, "type": SettingType.BOOLEAN, "description": "Enable or disable Gemini integration."},
             "api_key": {"value": None, "type": SettingType.STRING, "description": "Gemini API key", "required": True},
-            "model": {"value": "gemini-2.5-flash-preview-05-20", "type": SettingType.STRING, "description": "Gemini model name (e.g., gemini-1.5-flash-latest, gemini-1.5-pro-latest)."},
+            "model": {"value": cls.DEFAULT_MODEL, "type": SettingType.STRING, "description": "Gemini model name (e.g., gemini-2.5-flash, gemini-2.5-pro)."},
             "thinking_budget": {"value": 1024.0, "type": SettingType.FLOAT, "description": "Gemini thinking budget (0 to disable, min 1024 if enabled, max 24576)."},
             "temperature": {"value": 0.7, "type": SettingType.FLOAT, "description": "Gemini temperature for controlling randomness (e.g., 0.7). Values typically range from 0.0 to 2.0."},
             "embedding_model": {"value": "gemini-embedding-exp", "type": SettingType.STRING, "show": False, "description": "Gemini model name to use for embeddings (e.g., gemini-embedding-exp)."},

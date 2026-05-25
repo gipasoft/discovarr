@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 from urllib.parse import urlparse
 import os
 import asyncio
@@ -42,7 +42,7 @@ class ImageCacheService:
         except Exception:
             return '.jpg' # Default on any parsing error
 
-    async def save_image_from_url(self, session: aiohttp.ClientSession, image_url: str, provider_name: str, item_id: str) -> Optional[str]:
+    async def save_image_from_url(self, session: aiohttp.ClientSession, image_url: str, provider_name: str, item_id: str, headers: Optional[Dict[str, str]] = None) -> Optional[str]:
         """
         Downloads an image from a URL and saves it to the local cache.
 
@@ -72,7 +72,7 @@ class ImageCacheService:
                 self.logger.info(f"Image already cached at {local_image_path}. Using existing file.")
                 return filename
 
-            async with session.get(image_url, timeout=10) as response:
+            async with session.get(image_url, timeout=10, headers=headers) as response:
                 response.raise_for_status()  # Will raise an ClientResponseError for bad responses (4XX or 5XX)
 
                 async with aiofiles.open(local_image_path, 'wb') as f:

@@ -15,11 +15,30 @@ const props = defineProps({ category: String, historyItems: Array })
 const { historyItems, category } = toRefs(props)
 
 const emit = defineEmits([
-    'delete-media-item' // Emit when a media item delete is requested
+    'delete-history-item'
 ]);
 
 const placeholderImage = '/placeholder-image.jpg'; // Assumes it's in the public folder
 const imageDisplayData = ref({}); // Stores { src: String, isLoading: Boolean, originalPosterUrl: String|null }
+const apiBaseUrl = config.apiUrl.replace(/\/api$/, '');
+
+const resolveImageSrc = (posterUrl, posterUrlSource = null) => {
+    const imageValue = posterUrl || posterUrlSource;
+
+    if (!imageValue) {
+        return placeholderImage;
+    }
+
+    if (/^https?:\/\//i.test(imageValue)) {
+        return imageValue;
+    }
+
+    if (imageValue.startsWith('/')) {
+        return `${apiBaseUrl}${imageValue}`;
+    }
+
+    return `${apiBaseUrl}/cache/image/${imageValue}`;
+};
 
 watch(() => props.historyItems, (newHistoryItems) => {
     const newImageStates = {};
@@ -30,22 +49,19 @@ watch(() => props.historyItems, (newHistoryItems) => {
                 const currentData = imageDisplayData.value[itemId];
                 
                 // If poster URL hasn't changed, keep existing state to avoid re-flicker
-                if (currentData && currentData.originalPosterUrl === historyItem.media.poster_url) {
+                const posterUrl = historyItem.media?.poster_url;
+                const posterUrlSource = historyItem.media?.poster_url_source;
+                const posterKey = posterUrl || posterUrlSource || null;
+
+                if (currentData && currentData.originalPosterUrl === posterKey) {
                     newImageStates[itemId] = currentData;
                 } else {
-                    if (historyItem.media.poster_url) {
-                        newImageStates[itemId] = {
-                            src: `${config.apiUrl.replace(/\/api$/, '')}/cache/image/${historyItem.media.poster_url}`,
-                            isLoading: true,
-                            originalPosterUrl: historyItem.media.poster_url
-                        };
-                    } else {
-                        newImageStates[itemId] = {
-                            src: placeholderImage,
-                            isLoading: false,
-                            originalPosterUrl: null
-                        };
-                    }
+                    const imageSrc = resolveImageSrc(posterUrl, posterUrlSource);
+                    newImageStates[itemId] = {
+                        src: imageSrc,
+                        isLoading: imageSrc !== placeholderImage,
+                        originalPosterUrl: posterKey
+                    };
                 }
             } // Make sure historyItem.id is the correct unique identifier
         });
@@ -60,7 +76,7 @@ const onImageLoad = (mediaId) => {
 };
 
 const onImageError = (mediaId) => {
-    if (imageDisplayData.value[mediaId] && imageDisplayData.value[mediaId].src !== placeholderImage) {
+    if (imageDisplayData.value[mediaId]?.src !== placeholderImage) {
         imageDisplayData.value[mediaId].src = placeholderImage;
     }
     if (imageDisplayData.value[mediaId]) { // Ensure isLoading is set to false even if it was already placeholder

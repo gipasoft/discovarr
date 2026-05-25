@@ -189,7 +189,7 @@ async def test_sync_watch_history_to_db_new_item(discovarr_instance: Discovarr):
         # 3. Assert
         assert result == [history_item] # Method should return the items it processed
         mock_tmdb.assert_called_once_with(tmdb_id='12345', media_type='movie')
-        mock_cache.assert_called_once_with('http://example.com/poster.jpg', 'test_provider', '12345')
+        mock_cache.assert_called_once_with('http://example.com/poster.jpg', 'test_provider', '12345', headers=None)
 
         # Verify database state
         media_entry = Media.get_or_none(Media.tmdb_id == '12345')
@@ -230,8 +230,8 @@ async def test_sync_watch_history_to_db_existing_item(discovarr_instance: Discov
         last_played_date='2023-10-27T11:00:00Z', poster_url=None, is_favorite=False
     )
 
-    # Mock external calls (should not be called for existing media)
-    with patch.object(discovarr_instance.tmdb, 'get_media_detail') as mock_tmdb, \
+    # Existing media without a poster should attempt a metadata lookup so the poster can be repaired.
+    with patch.object(discovarr_instance.tmdb, 'get_media_detail', return_value=None) as mock_tmdb, \
          patch.object(discovarr_instance, '_cache_image_if_needed') as mock_cache:
 
         # 2. Execute
@@ -242,7 +242,7 @@ async def test_sync_watch_history_to_db_existing_item(discovarr_instance: Discov
 
         # 3. Assert
         assert result == [history_item_to_sync]
-        mock_tmdb.assert_not_called()
+        mock_tmdb.assert_called_once_with(tmdb_id='67890', media_type='movie')
         mock_cache.assert_not_called()
 
         media_entry = Media.get_or_none(Media.id == media_pk)

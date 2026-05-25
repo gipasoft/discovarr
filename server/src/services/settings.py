@@ -80,6 +80,13 @@ class SettingsService:
             return float(value)
         return value
 
+    def _normalize_setting_value(self, group: str, name: str, value: Any) -> Any:
+        if group == "gemini" and name == "model":
+            from providers.gemini import GeminiProvider
+            return GeminiProvider.normalize_model_name(value)
+
+        return value
+
     @staticmethod
     def _build_default_settings_if_needed():
         """
@@ -148,9 +155,17 @@ class SettingsService:
                 # Check environment variable (e.g., JELLYFIN_URL for jellyfin.url)
                 env_var = f"{group.upper()}_{name.upper()}"
                 env_value = os.environ.get(env_var)
+                if env_value is not None:
+                    normalized_env_value = self._normalize_setting_value(group, name, env_value)
+                    if normalized_env_value != env_value:
+                        self.logger.info(
+                            f"Normalizing setting {group}.{name} from environment variable {env_var}: "
+                            f"{env_value} -> {normalized_env_value}"
+                        )
+                    env_value = normalized_env_value
 
                 # Determine the value to use for creation
-                value_for_creation = env_value if env_value is not None else config["value"]
+                value_for_creation = env_value if env_value is not None else self._normalize_setting_value(group, name, config["value"])
 
                 setting, created = Settings.get_or_create(
                     group=group,
@@ -170,6 +185,13 @@ class SettingsService:
                     setting.value = env_value
                     setting.updated_at = datetime.now()
                     setting.save()
+                elif env_value is None:
+                    normalized_existing_value = self._normalize_setting_value(group, name, setting.value)
+                    if normalized_existing_value != setting.value:
+                        self.logger.info(f"Normalizing existing setting {group}.{name}: {setting.value} -> {normalized_existing_value}")
+                        setting.value = normalized_existing_value
+                        setting.updated_at = datetime.now()
+                        setting.save()
 
     def get(self, group: str, name: str) -> Optional[Any]:
         """Get a setting value with proper type conversion."""
@@ -186,12 +208,13 @@ class SettingsService:
             try:
                 setting = Settings.get(Settings.group == group, Settings.name == name)
                 if setting.value is not None:
-                    return self._convert_value(setting.value, setting_type)
+                    converted_value = self._convert_value(setting.value, setting_type)
+                    return self._normalize_setting_value(group, name, converted_value)
             except Settings.DoesNotExist:
                 self.logger.warning(f"Setting {group}.{name} not found in database")
 
             # Fall back to default from DEFAULT_SETTINGS
-            return setting_config["value"]
+            return self._normalize_setting_value(group, name, setting_config["value"])
 
         except Exception as e:
             self.logger.error(f"Error getting setting {group}.{name}: {e}")
@@ -203,6 +226,7 @@ class SettingsService:
             setting = Settings.get(Settings.group == group, Settings.name == name)
             old_db_value_str = setting.value # Store the current string value from DB
             setting_type = SettingType(setting.type)
+            value = self._normalize_setting_value(group, name, value)
             
             # Validate value type
             if not self._validate_value(value, setting_type):
@@ -266,7 +290,11 @@ class SettingsService:
                 
                 setting = settings.get((group, name))
                 if setting and setting.value is not None:
-                    actual_value = self._convert_value(setting.value, setting_type)
+                    actual_value = self._normalize_setting_value(
+                        group,
+                        name,
+                        self._convert_value(setting.value, setting_type)
+                    )
                 
                 result[group][name] = {
                     "value": actual_value,
