@@ -813,6 +813,23 @@ class Discovarr:
 
         return poster_url.startswith("http://") or poster_url.startswith("https://")
 
+    def _get_tmdb_details_for_watch_history_item(self, item: ItemsFiltered) -> Optional[Dict[str, Any]]:
+        if not self.tmdb or not item.type:
+            return None
+
+        tmdb_details = self.tmdb.get_media_detail(tmdb_id=item.id, media_type=item.type) if item.id else None
+        if tmdb_details and tmdb_details.get("poster_path"):
+            return tmdb_details
+
+        if item.name:
+            self.logger.info(f"TMDB detail lookup did not find a poster for '{item.name}'. Trying title search.")
+            tmdb_lookup = self.tmdb.lookup_media(query=item.name, media_type=item.type)
+            if tmdb_lookup and tmdb_lookup.get("id"):
+                lookup_details = self.tmdb.get_media_detail(tmdb_id=tmdb_lookup.get("id"), media_type=item.type)
+                return lookup_details or tmdb_lookup
+
+        return tmdb_details
+
     async def _cache_image_if_needed(self, image_url: str, provider_name: str, item_id: Union[str, int], headers: Optional[Dict[str, str]] = None) -> Optional[str]:
         """
         Asynchronously caches an image if a valid external URL is provided.
@@ -899,7 +916,7 @@ class Discovarr:
 
                 if not media_instance:
                     self.logger.info(f"Media '{item.name}', type: ({item.type}) not found in DB. Creating new entry from {source} watch history.")
-                    tmdb_details = self.tmdb.get_media_detail(tmdb_id=item.id, media_type=item.type) if self.tmdb and item.id else None
+                    tmdb_details = self._get_tmdb_details_for_watch_history_item(item)
                     cached_poster_path, poster_url_source_val = await self._resolve_watch_history_poster(item, source, tmdb_details)
                     
                     network_names = []
@@ -921,7 +938,7 @@ class Discovarr:
 
                     media_data_for_creation = {
                         "title": item.name,
-                        "tmdb_id": item.id,
+                        "tmdb_id": tmdb_details.get("id") if tmdb_details and tmdb_details.get("id") else item.id,
                         "media_type": item.type,
                         "entity_type": "library", 
                         "source_provider": source,
@@ -949,11 +966,13 @@ class Discovarr:
                 
                 if media_instance:
                     if self._poster_needs_cache_repair(media_instance.poster_url):
-                        tmdb_details_for_existing = self.tmdb.get_media_detail(tmdb_id=item.id, media_type=item.type) if self.tmdb and item.id else None
+                        tmdb_details_for_existing = self._get_tmdb_details_for_watch_history_item(item)
                         cached_poster_path, poster_url_source_val = await self._resolve_watch_history_poster(item, source, tmdb_details_for_existing)
                         media_updates = {}
                         if cached_poster_path:
                             media_updates["poster_url"] = cached_poster_path
+                        if tmdb_details_for_existing and tmdb_details_for_existing.get("id") and media_instance.tmdb_id != str(tmdb_details_for_existing.get("id")):
+                            media_updates["tmdb_id"] = str(tmdb_details_for_existing.get("id"))
                         if poster_url_source_val and not media_instance.poster_url_source:
                             media_updates["poster_url_source"] = poster_url_source_val
                         if media_updates:

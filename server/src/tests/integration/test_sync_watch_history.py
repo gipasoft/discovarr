@@ -230,8 +230,9 @@ async def test_sync_watch_history_to_db_existing_item(discovarr_instance: Discov
         last_played_date='2023-10-27T11:00:00Z', poster_url=None, is_favorite=False
     )
 
-    # Existing media without a poster should attempt a metadata lookup so the poster can be repaired.
+    # Existing media without a poster should attempt metadata lookup so the poster can be repaired.
     with patch.object(discovarr_instance.tmdb, 'get_media_detail', return_value=None) as mock_tmdb, \
+         patch.object(discovarr_instance.tmdb, 'lookup_media', return_value=None) as mock_tmdb_lookup, \
          patch.object(discovarr_instance, '_cache_image_if_needed') as mock_cache:
 
         # 2. Execute
@@ -243,9 +244,68 @@ async def test_sync_watch_history_to_db_existing_item(discovarr_instance: Discov
         # 3. Assert
         assert result == [history_item_to_sync]
         mock_tmdb.assert_called_once_with(tmdb_id='67890', media_type='movie')
+        mock_tmdb_lookup.assert_called_once_with(query='Existing Movie In DB', media_type='movie')
         mock_cache.assert_not_called()
 
         media_entry = Media.get_or_none(Media.id == media_pk)
         assert media_entry is not None
         assert media_entry.watch_count == 2 # Incremented from 1
         assert media_entry.watched is True
+
+@pytest.mark.asyncio
+async def test_sync_watch_history_repairs_existing_item_poster_with_tmdb_title_search(discovarr_instance: Discovarr):
+    """
+    Existing Plex records may only have a Plex internal ID. If provider poster caching failed,
+    fall back to TMDB title search so the watch history card gets a usable poster.
+    """
+    with discovarr_instance.db.db.atomic():
+        media_to_delete = Media.get_or_none(Media.title == "Posterless Plex Movie")
+        if media_to_delete:
+            WatchHistory.delete().where(WatchHistory.media == media_to_delete.id).execute()
+            media_to_delete.delete_instance()
+
+    media_pk = discovarr_instance.db.create_media({
+        "title": "Posterless Plex Movie",
+        "tmdb_id": "plex-internal-123",
+        "media_type": "movie",
+        "entity_type": "library",
+        "watch_count": 1,
+        "watched": True,
+    })
+    assert media_pk is not None
+
+    history_item_to_sync = ItemsFiltered(
+        id="plex-internal-123",
+        type="movie",
+        name="Posterless Plex Movie",
+        last_played_date="2023-10-28T11:00:00Z",
+        poster_url=None,
+        is_favorite=False,
+    )
+
+    def mock_get_media_detail(tmdb_id, media_type):
+        if tmdb_id == "98765":
+            return {"id": 98765, "poster_path": "/tmdbposter.jpg", "overview": "Found by title."}
+        return None
+
+    with patch.object(discovarr_instance.tmdb, "get_media_detail", side_effect=mock_get_media_detail) as mock_tmdb_detail, \
+         patch.object(discovarr_instance.tmdb, "lookup_media", return_value={"id": 98765, "poster_path": "/tmdbposter.jpg"}) as mock_tmdb_lookup, \
+         patch.object(discovarr_instance, "_cache_image_if_needed", new_callable=AsyncMock, return_value="tmdb_98765.jpg") as mock_cache:
+
+        result = await discovarr_instance._sync_watch_history_to_db(
+            user_name="PlexUser",
+            user_id="plex_user_id",
+            recently_watched_items=[history_item_to_sync],
+            source="plex",
+        )
+
+        assert result == [history_item_to_sync]
+        mock_tmdb_detail.assert_any_call(tmdb_id="plex-internal-123", media_type="movie")
+        mock_tmdb_detail.assert_any_call(tmdb_id=98765, media_type="movie")
+        mock_tmdb_lookup.assert_called_once_with(query="Posterless Plex Movie", media_type="movie")
+        mock_cache.assert_called_once_with("https://image.tmdb.org/t/p/w500/tmdbposter.jpg", "tmdb", 98765, headers=None)
+
+        media_entry = Media.get_by_id(media_pk)
+        assert media_entry.poster_url == "tmdb_98765.jpg"
+        assert media_entry.poster_url_source == "https://image.tmdb.org/t/p/w500/tmdbposter.jpg"
+        assert media_entry.tmdb_id == "98765"
